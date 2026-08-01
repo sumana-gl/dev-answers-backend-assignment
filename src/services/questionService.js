@@ -2,25 +2,25 @@ import Question from '../models/Question.js';
 import Answer from '../models/Answer.js';
 import Tag from '../models/Tag.js';
 import { createAppError } from '../utils/createAppError.js';
+import { getAnswerCountsByQuestionIds } from '../utils/getAnswerCountsByQuestionIds.js';
 import * as voteService from './voteService.js';
 
 export const getAllQuestionsService = async () => {
     const questions = await Question.find()
         .populate('author', 'name')
-        .populate('tags', 'name');
+        .populate('tags', 'name')
+        .lean();
 
     if (!questions || questions.length === 0) {
         throw createAppError('No questions found', 404);
     }
 
-    const questionsWithCount = await Promise.all(
-        questions.map(async (q) => {
-            const answerCount = await Answer.countDocuments({ questionId: q._id });
-            return { ...q.toObject(), answerCount };
-        })
-    );
+    const answerCounts = await getAnswerCountsByQuestionIds(questions.map(({ _id }) => _id));
 
-    return questionsWithCount;
+    return questions.map((question) => ({
+        ...question,
+        answerCount: answerCounts.get(question._id.toString()) ?? 0,
+    }));
 };
 
 export const getQuestionByIdService = async (id) => {
@@ -30,15 +30,16 @@ export const getQuestionByIdService = async (id) => {
         { new: true }
     )
         .populate('author', 'name')
-        .populate('tags', 'name');
+        .populate('tags', 'name')
+        .lean();
 
     if (!question) {
         throw createAppError('Question not found', 404);
     }
 
-    const answers = await Answer.find({ questionId: id }).populate('author', 'name');
+    const answers = await Answer.find({ questionId: id }).populate('author', 'name').lean();
 
-    return { ...question.toObject(), answers };
+    return { ...question, answers };
 };
 
 export const createQuestionService = async (title, description, tags, author) => {

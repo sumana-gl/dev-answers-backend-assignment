@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import mongoose from 'mongoose';
 import Question from '../../../src/models/Question.js';
 import Answer from '../../../src/models/Answer.js';
@@ -55,6 +55,26 @@ describe('getAllQuestionsService', () => {
         await Answer.create({ questionId: q._id, answerText: 'Ans 2', author: otherUser._id });
         const questions = await getAllQuestionsService();
         expect(questions[0].answerCount).toBe(2);
+    });
+
+    it('batches answer counts instead of counting each question separately', async () => {
+        const firstQuestion = await createQuestionService('Q1', 'D1', 'tag-1', testUser._id);
+        const secondQuestion = await createQuestionService('Q2', 'D2', 'tag-2', testUser._id);
+
+        await Answer.create({ questionId: firstQuestion._id, answerText: 'Ans 1', author: otherUser._id });
+        await Answer.create({ questionId: firstQuestion._id, answerText: 'Ans 2', author: otherUser._id });
+        await Answer.create({ questionId: secondQuestion._id, answerText: 'Ans 3', author: otherUser._id });
+
+        const aggregateSpy = vi.spyOn(Answer, 'aggregate');
+        const countDocumentsSpy = vi.spyOn(Answer, 'countDocuments');
+
+        const questions = await getAllQuestionsService();
+        const countsById = new Map(questions.map((question) => [question._id.toString(), question.answerCount]));
+
+        expect(countsById.get(firstQuestion._id.toString())).toBe(2);
+        expect(countsById.get(secondQuestion._id.toString())).toBe(1);
+        expect(aggregateSpy).toHaveBeenCalledTimes(1);
+        expect(countDocumentsSpy).not.toHaveBeenCalled();
     });
 
     it('throws 404 when no questions exist', async () => {

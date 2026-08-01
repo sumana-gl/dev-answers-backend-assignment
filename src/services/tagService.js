@@ -1,19 +1,46 @@
 import Tag from '../models/Tag.js';
 import Question from '../models/Question.js';
-import Answer from '../models/Answer.js';
 import { createAppError } from '../utils/createAppError.js';
+import { getAnswerCountsByQuestionIds } from '../utils/getAnswerCountsByQuestionIds.js';
+
+const getQuestionCountsByTagIds = async (tagIds) => {
+    if (tagIds.length === 0) {
+        return new Map();
+    }
+
+    const counts = await Question.aggregate([
+        {
+            $match: {
+                tags: { $in: tagIds },
+            },
+        },
+        { $unwind: '$tags' },
+        {
+            $match: {
+                tags: { $in: tagIds },
+            },
+        },
+        {
+            $group: {
+                _id: '$tags',
+                questionCount: { $sum: 1 },
+            },
+        },
+    ]);
+
+    return new Map(
+        counts.map(({ _id, questionCount }) => [_id.toString(), questionCount])
+    );
+};
 
 export const getAllTagsService = async () => {
-    const tags = await Tag.find({});
+    const tags = await Tag.find({}).lean();
+    const questionCounts = await getQuestionCountsByTagIds(tags.map(({ _id }) => _id));
 
-    const tagsWithCount = await Promise.all(
-        tags.map(async (tag) => {
-            const questionCount = await Question.countDocuments({ tags: tag._id });
-            return { ...tag.toObject(), questionCount };
-        })
-    );
-
-    return tagsWithCount;
+    return tags.map((tag) => ({
+        ...tag,
+        questionCount: questionCounts.get(tag._id.toString()) ?? 0,
+    }));
 };
 
 export const getQuestionsByTagService = async (tagId) => {
@@ -25,14 +52,13 @@ export const getQuestionsByTagService = async (tagId) => {
     const questions = await Question.find({ tags: tagId })
         .populate({ path: 'author', select: 'name' })
         .populate('tags')
-        .sort({ createdAt: -1 });
+        .sort({ createdAt: -1 })
+        .lean();
 
-    const questionsWithCount = await Promise.all(
-        questions.map(async (q) => {
-            const answerCount = await Answer.countDocuments({ questionId: q._id });
-            return { ...(q.toObject?.() ?? q), answerCount };
-        })
-    );
+    const answerCounts = await getAnswerCountsByQuestionIds(questions.map(({ _id }) => _id));
 
-    return questionsWithCount;
+    return questions.map((question) => ({
+        ...question,
+        answerCount: answerCounts.get(question._id.toString()) ?? 0,
+    }));
 };
